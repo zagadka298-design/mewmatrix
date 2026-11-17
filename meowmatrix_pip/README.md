@@ -2,6 +2,10 @@
 
 > A lightweight, zero-dependency `cmatrix` alternative written in pure Python, featuring multi-color mixing, cat mode, dynamic terminal resizing, and customizable rain effects.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/zagadka298-design/mewmatrix/main/preview.gif" alt="MewMatrix Demo" width="650">
+</p>
+
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
