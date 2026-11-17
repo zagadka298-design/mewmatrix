@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MeowMatrix - A terminal matrix rain with multi-color mixing and cat mode.
+MeowMatrix / MewMatrix - A terminal matrix rain with multi-color mixing and cat mode.
 """
 
 from __future__ import annotations
@@ -9,10 +9,19 @@ import atexit
 import json
 import os
 import random
+import re
+import shutil
 import signal
 import sys
 import time
-from typing import Any, Dict, List, Tuple
+import urllib.request
+from typing import Any, Dict, List, Optional, Tuple
+
+__version__ = "2.2.0"
+
+GITHUB_RAW_URL = "https://raw.githubusercontent.com/zagadka298-design/mewmatrix/main/mewmatrix.py"
+GITHUB_REPO_URL = "https://github.com/zagadka298-design/mewmatrix"
+UPDATE_CACHE_FILE = os.path.expanduser("~/.config/mewmatrix/.last_update_check")
 
 # Configuration paths searched in priority order
 CONFIG_PATHS: List[str] = [
@@ -58,6 +67,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "charset": "full",
     "tail_length": 15,
     "bold_head": True,
+    "check_updates": True,
 }
 
 CHARSETS: Dict[str, str] = {
@@ -133,21 +143,194 @@ def init_config() -> None:
         print(f"Error creating config file: {e}", file=sys.stderr)
 
 
+def parse_version(version_str: str) -> Tuple[int, ...]:
+    """Parse a semver version string like '2.2.0' into a tuple of integers for comparison."""
+    try:
+        clean = re.sub(r"[^\d.]", "", str(version_str))
+        return tuple(int(x) for x in clean.split(".") if x)
+    except Exception:
+        return (0,)
+
+
+def fetch_remote_version(timeout: float = 4.0) -> Tuple[Optional[str], Optional[str]]:
+    """Fetch the latest script and remote version string from GitHub."""
+    try:
+        req = urllib.request.Request(
+            GITHUB_RAW_URL,
+            headers={"User-Agent": f"MewMatrix-Updater/{__version__}"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            content = response.read().decode("utf-8")
+        match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', content)
+        remote_ver = match.group(1) if match else None
+        return remote_ver, content
+    except Exception:
+        return None, None
+
+
+def check_for_updates_background() -> Optional[str]:
+    """
+    Check for updates at most once every 24 hours.
+    Returns the new version string if an update is available, or None.
+    Fails silently so matrix startup is never delayed or disrupted.
+    """
+    try:
+        now = time.time()
+        last_check_time = 0.0
+        cached_remote_ver: Optional[str] = None
+
+        if os.path.isfile(UPDATE_CACHE_FILE):
+            try:
+                with open(UPDATE_CACHE_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    last_check_time = float(data.get("timestamp", 0))
+                    cached_remote_ver = data.get("version")
+            except Exception:
+                pass
+
+        if (now - last_check_time) < 86400:
+            if cached_remote_ver and parse_version(cached_remote_ver) > parse_version(__version__):
+                return cached_remote_ver
+            return None
+
+        remote_ver, _ = fetch_remote_version(timeout=1.5)
+        if remote_ver:
+            try:
+                os.makedirs(os.path.dirname(UPDATE_CACHE_FILE), exist_ok=True)
+                with open(UPDATE_CACHE_FILE, "w", encoding="utf-8") as f:
+                    json.dump({"timestamp": now, "version": remote_ver}, f)
+            except Exception:
+                pass
+
+            if parse_version(remote_ver) > parse_version(__version__):
+                return remote_ver
+    except Exception:
+        pass
+    return None
+
+
+def update_mewmatrix(force: bool = False) -> None:
+    """Download and install the latest version of MewMatrix from GitHub."""
+    print("🐱 Checking for MewMatrix updates from GitHub...")
+    remote_ver, content = fetch_remote_version(timeout=6.0)
+
+    if not remote_ver or not content:
+        print("❌ Could not connect to GitHub or fetch the latest version.")
+        print(f"👉 Check your internet connection or visit: {GITHUB_REPO_URL}")
+        return
+
+    curr_tuple = parse_version(__version__)
+    remote_tuple = parse_version(remote_ver)
+
+    if not force and remote_tuple <= curr_tuple:
+        print(f"✨ MewMatrix is already at the latest version (v{__version__})!")
+        print("To reinstall/refresh anyway, run: mewmatrix --update --force")
+        return
+
+    print(f"📥 Updating MewMatrix: v{__version__} -> v{remote_ver}...")
+
+    try:
+        compile(content, "<mewmatrix_update>", "exec")
+    except Exception as e:
+        print(f"❌ Downloaded update failed syntax validation: {e}")
+        return
+
+    candidate_paths: List[str] = []
+
+    which_path = shutil.which("mewmatrix")
+    if which_path:
+        candidate_paths.append(which_path)
+
+    try:
+        self_file = os.path.abspath(__file__)
+        if self_file not in candidate_paths:
+            candidate_paths.append(self_file)
+    except Exception:
+        pass
+
+    for standard_path in [
+        os.path.expanduser("~/.local/bin/mewmatrix"),
+        "/usr/local/bin/mewmatrix",
+    ]:
+        if standard_path not in candidate_paths and os.path.exists(standard_path):
+            candidate_paths.append(standard_path)
+
+    updated_any = False
+    for path in candidate_paths:
+        try:
+            real_target = os.path.realpath(path)
+            paths_to_update = {real_target, path}
+
+            for p in paths_to_update:
+                if os.path.isdir(p):
+                    continue
+                os.makedirs(os.path.dirname(p), exist_ok=True)
+                tmp_file = p + ".tmp"
+                with open(tmp_file, "w", encoding="utf-8") as f:
+                    f.write(content)
+                os.chmod(tmp_file, 0o755)
+                os.replace(tmp_file, p)
+
+                pycache_dir = os.path.join(os.path.dirname(p), "__pycache__")
+                if os.path.isdir(pycache_dir):
+                    shutil.rmtree(pycache_dir, ignore_errors=True)
+                updated_any = True
+        except PermissionError:
+            print(f"⚠️ Permission denied when writing to: {path}")
+        except Exception as e:
+            print(f"⚠️ Could not update {path}: {e}")
+
+    if not updated_any:
+        fallback_path = os.path.expanduser("~/.local/bin/mewmatrix")
+        try:
+            os.makedirs(os.path.dirname(fallback_path), exist_ok=True)
+            tmp_file = fallback_path + ".tmp"
+            with open(tmp_file, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.chmod(tmp_file, 0o755)
+            os.replace(tmp_file, fallback_path)
+            updated_any = True
+        except Exception as e:
+            print(f"❌ Failed to install update to {fallback_path}: {e}")
+            print("👉 Try running with sudo: sudo mewmatrix --update")
+            return
+
+    try:
+        os.makedirs(os.path.dirname(UPDATE_CACHE_FILE), exist_ok=True)
+        with open(UPDATE_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"timestamp": time.time(), "version": remote_ver}, f)
+    except Exception:
+        pass
+
+    try:
+        user_meow = os.path.expanduser("~/.local/bin/meowmatrix")
+        user_mew = os.path.expanduser("~/.local/bin/mewmatrix")
+        if os.path.exists(user_mew) and not os.path.exists(user_meow):
+            os.symlink(user_mew, user_meow)
+    except Exception:
+        pass
+
+    print(f"🎉 MewMatrix successfully updated to v{remote_ver}!")
+    print("Run 'mewmatrix --version' to verify.")
+
+
 def print_help() -> None:
     """Print usage and help information."""
-    prog = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else "meowmatrix"
+    prog = os.path.basename(sys.argv[0]) if sys.argv and sys.argv[0] else "mewmatrix"
     if prog.endswith(".py"):
         prog = prog[:-3]
     if prog == "__main__":
-        prog = "meowmatrix"
+        prog = "mewmatrix"
 
-    help_text = f"""🐱 MeowMatrix - Terminal matrix rain with colors & cats!
+    help_text = f"""🐱 MewMatrix v{__version__} - Terminal matrix rain with colors & cats!
 
 Usage:
   {prog} [OPTIONS] [COLORS...]
 
 Options:
   meow             Enable cat emoji mode 🐱
+  --update         Check and automatically update to the latest version
+  --version, -v    Show version information
   --init           Create default config file (~/.config/meowmatrix/config.meow)
   -h, --help       Show this help message
 
@@ -161,6 +344,7 @@ Examples:
   {prog} meow
   {prog} red blue
   {prog} meow rainbow
+  {prog} --update
 """
     print(help_text.strip())
 
@@ -184,10 +368,8 @@ def resolve_colors(args: List[str], config_color: Any) -> List[str]:
         return list(RAINBOW_COLORS)
 
     if selected:
-        # Preserve order while removing duplicates
         return list(dict.fromkeys(selected))
 
-    # Fallback to config setting
     config_colors: List[str] = []
     if isinstance(config_color, list):
         config_items = [str(c).lower().strip() for c in config_color]
@@ -341,6 +523,17 @@ class MatrixRenderer:
 def main() -> None:
     args = sys.argv[1:]
 
+    # Handle version flag
+    if any(arg in ("-v", "--version") for arg in args):
+        print(f"mewmatrix {__version__}")
+        return
+
+    # Handle self-update command
+    if any(arg in ("--update", "update") for arg in args):
+        force_update = "--force" in args
+        update_mewmatrix(force=force_update)
+        return
+
     # Handle help flag
     if any(arg in ("-h", "--help") for arg in args):
         print_help()
@@ -352,6 +545,13 @@ def main() -> None:
         return
 
     cfg = load_config()
+
+    available_update: Optional[str] = None
+    if cfg.get("check_updates", True):
+        try:
+            available_update = check_for_updates_background()
+        except Exception:
+            available_update = None
 
     meow_mode = "meow" in args
 
@@ -382,7 +582,7 @@ def main() -> None:
 
     if meow_mode:
         chars = CAT_EMOJIS
-        col_stride = 2  # Emojis occupy 2 visual columns
+        col_stride = 2
     else:
         if charset_name in CHARSETS:
             chars = CHARSETS[charset_name]
@@ -405,7 +605,6 @@ def main() -> None:
     )
     renderer = MatrixRenderer(bold_head=bold_head)
 
-    # Handle dynamic terminal resizing
     terminal_resized = False
 
     def handle_sigwinch(signum, frame):
@@ -418,7 +617,6 @@ def main() -> None:
         except (ValueError, OSError):
             pass
 
-    # Ensure clean exit on termination signals
     def handle_exit_signal(signum, frame):
         sys.exit(0)
 
@@ -429,7 +627,6 @@ def main() -> None:
             except (ValueError, OSError):
                 pass
 
-    # Initial terminal setup: clear screen, disable autowrap, and hide cursor
     try:
         sys.stdout.write(ANSI_CLEAR_SCREEN + ANSI_DISABLE_AUTOWRAP + ANSI_HIDE_CURSOR)
         sys.stdout.flush()
@@ -458,6 +655,9 @@ def main() -> None:
             sys.stdout.write(ANSI_CLEAR_SCREEN + ANSI_CURSOR_HOME)
             sys.stdout.flush()
             print("meow!")
+            if available_update:
+                print(f"💡 A new version of MewMatrix is available: v{available_update} (current: v{__version__})")
+                print("   Run 'mewmatrix --update' to upgrade!")
         except (OSError, ValueError):
             pass
 

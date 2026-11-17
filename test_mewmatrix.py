@@ -170,6 +170,32 @@ class TestMewMatrix(unittest.TestCase):
         for line in frame.split("\n"):
             self.assertEqual(visual_len(line), 15)
 
+    def test_version_and_parse_version(self):
+        """Verify version format and comparison semantics."""
+        self.assertEqual(mewmatrix.__version__, "2.2.0")
+        self.assertGreater(mewmatrix.parse_version("2.2.0"), mewmatrix.parse_version("2.1.0"))
+        self.assertGreater(mewmatrix.parse_version("3.0.0"), mewmatrix.parse_version("2.9.9"))
+        self.assertEqual(mewmatrix.parse_version("2.2.0"), (2, 2, 0))
+
+    def test_version_cli_flag(self):
+        """Verify that -v and --version output the version and exit cleanly."""
+        for flag in ["-v", "--version"]:
+            buf = io.StringIO()
+            with patch("sys.argv", ["mewmatrix", flag]), patch("sys.stdout", buf):
+                mewmatrix.main()
+            self.assertIn("2.2.0", buf.getvalue())
+
+    def test_help_cli_flag(self):
+        """Verify that -h and --help output help text containing --update."""
+        for flag in ["-h", "--help"]:
+            buf = io.StringIO()
+            with patch("sys.argv", ["mewmatrix", flag]), patch("sys.stdout", buf):
+                mewmatrix.main()
+            output = buf.getvalue()
+            self.assertIn("--update", output)
+            self.assertIn("--version", output)
+            self.assertIn("meow", output)
+
 
 if __name__ == "__main__":
     unittest.main()

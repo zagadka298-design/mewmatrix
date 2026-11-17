@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="meowmatrix",
-    version="2.1.0",
+    version="2.2.0",
     description="A cmatrix alternative with multi-color mixing and cat mode",
     long_description=long_description,
     long_description_content_type="text/markdown",
