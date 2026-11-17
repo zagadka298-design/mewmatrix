@@ -1,12 +1,12 @@
 from setuptools import setup
 
-with open("README.md", "r") as fh:
+with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
     name="meowmatrix",
-    version="2.0.0",
-    description="A cmatrix alternative with multi-color mixing and rainbow mode",
+    version="2.1.0",
+    description="A cmatrix alternative with multi-color mixing and cat mode",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/zagadka298-design/meowmatrix",
@@ -17,6 +17,7 @@ setup(
     entry_points={
         "console_scripts": [
             "meowmatrix=meowmatrix:main",
+            "mewmatrix=meowmatrix:main",
         ],
     },
     classifiers=[
